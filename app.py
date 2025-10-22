@@ -9,7 +9,7 @@ st.set_page_config(page_title="Mental Health Companion", page_icon="🧠")
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-pro')
 except:
     st.error("⚠️ API key not configured. Please add your Gemini API key in Streamlit secrets.")
     st.stop()
@@ -266,3 +266,4 @@ This is a free mental health companion powered by Google Gemini AI.
 - Secure and private
 """)
 st.sidebar.write(f"**Your entries:** {len(st.session_state.entries)}")
+
