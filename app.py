@@ -10,11 +10,27 @@ try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # Try to initialize model
-    try:
-        model = genai.GenerativeModel('gemini-pro')
-    except:
-        st.error("⚠️ Could not load Gemini model. Please check your API key.")
+    # Try different model names until one works
+    model = None
+    model_options = [
+        'gemini-1.5-flash-latest',
+        'gemini-1.5-flash',
+        'gemini-1.5-pro-latest',
+        'gemini-pro'
+    ]
+    
+    for model_name in model_options:
+        try:
+            model = genai.GenerativeModel(model_name)
+            # Test if it works
+            test = model.generate_content("Hello")
+            st.sidebar.success(f"✅ Using model: {model_name}")
+            break
+        except:
+            continue
+    
+    if model is None:
+        st.error("⚠️ Could not load any Gemini model. Please check your API key.")
         st.stop()
         
 except Exception as e:
@@ -314,3 +330,4 @@ This is a free mental health companion powered by Google Gemini AI.
 - Secure and private
 """)
 st.sidebar.write(f"**Your entries:** {len(st.session_state.entries)}")
+
