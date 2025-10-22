@@ -1,32 +1,18 @@
 import streamlit as st
-from transformers import pipeline
+import google.generativeai as genai
 from datetime import datetime
 
 # Page config
 st.set_page_config(page_title="Mental Health Companion", page_icon="🧠")
 
-# Load models (cached so they only load once)
-@st.cache_resource
-def load_emotion_detector():
-    return pipeline(
-        "text-classification",
-        model="j-hartmann/emotion-english-distilroberta-base",
-        return_all_scores=False
-    )
-
-@st.cache_resource
-def load_text_generator():
-    return pipeline(
-        'text-generation',
-        model='distilgpt2',
-        max_length=100,
-        pad_token_id=50256
-    )
-
-# Load models with progress
-with st.spinner("🔄 Loading AI models... (first time takes 2-3 minutes)"):
-    emotion_detector = load_emotion_detector()
-    text_generator = load_text_generator()
+# Get API key from Streamlit secrets (we'll set this up)
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except:
+    st.error("⚠️ API key not configured. Please add your Gemini API key in Streamlit secrets.")
+    st.stop()
 
 # App title
 st.title("🧠 Mental Health Companion")
@@ -41,6 +27,23 @@ page = st.sidebar.selectbox(
     "Navigate",
     ["📝 Journal Entry", "💡 Get Prompt", "📊 Therapy Prep", "📖 View History"]
 )
+
+# Helper function for emotion detection
+def detect_emotion_with_gemini(text):
+    prompt = f"""Analyze the emotion in this journal entry. Respond with ONLY a JSON object in this exact format:
+{{"emotion": "one of: joy, sadness, anger, fear, surprise, neutral", "confidence": 0.85}}
+
+Journal entry: {text}"""
+    
+    try:
+        response = model.generate_content(prompt)
+        # Parse the response
+        import json
+        result = json.loads(response.text)
+        return result['emotion'], result['confidence']
+    except:
+        # Fallback
+        return "neutral", 0.5
 
 # PAGE 1: Journal Entry
 if page == "📝 Journal Entry":
@@ -59,10 +62,8 @@ if page == "📝 Journal Entry":
         if st.button("💾 Save Entry", type="primary"):
             if user_entry.strip():
                 with st.spinner("🔍 Analyzing your entry..."):
-                    # Detect emotion
-                    result = emotion_detector(user_entry)[0]
-                    emotion = result['label']
-                    confidence = result['score']
+                    # Detect emotion using Gemini
+                    emotion, confidence = detect_emotion_with_gemini(user_entry)
                     
                     # Save entry
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -82,19 +83,15 @@ if page == "📝 Journal Entry":
                     st.progress(confidence)
                     st.caption(f"Confidence: {confidence:.1%}")
                     
-                    # Supportive message based on emotion
-                    supportive_messages = {
-                        'joy': "💛 It's wonderful to see you feeling positive!",
-                        'sadness': "💙 Thank you for sharing. It's okay to feel this way.",
-                        'anger': "❤️ Your feelings are valid. Take time to process them.",
-                        'fear': "💜 It's brave of you to acknowledge these feelings.",
-                        'surprise': "💚 Life can be unexpected. You're handling it well.",
-                        'disgust': "🧡 Your feelings matter. Take care of yourself.",
-                        'neutral': "💙 Thank you for taking time to journal today."
-                    }
+                    # Get supportive response from Gemini
+                    support_prompt = f"""You are a compassionate mental health companion. The user just journaled about their feelings (emotion: {emotion}).
+Provide a brief, warm, supportive response (2-3 sentences maximum). Be validating and encouraging.
+
+User's entry: {user_entry[:300]}"""
                     
-                    message = supportive_messages.get(emotion, "💙 Thank you for sharing.")
-                    st.write(message)
+                    support_response = model.generate_content(support_prompt)
+                    st.write("💙 **Response:**")
+                    st.write(support_response.text)
                     
             else:
                 st.warning("⚠️ Please write something first")
@@ -112,39 +109,11 @@ elif page == "💡 Get Prompt":
     
     if st.button("✨ Generate Prompt", type="primary"):
         with st.spinner("🤔 Creating your prompt..."):
-            # Create prompt based on topic
-            prompt_starters = {
-                "General Reflection": "Write a reflective journaling prompt that encourages self-awareness:",
-                "Stress & Anxiety": "Write a calming journaling prompt about managing stress and anxiety:",
-                "Gratitude": "Write an uplifting journaling prompt about gratitude and appreciation:",
-                "Self-Compassion": "Write a kind journaling prompt about self-compassion and self-care:",
-                "Relationships": "Write a thoughtful journaling prompt about relationships and connections:",
-                "Personal Growth": "Write an inspiring journaling prompt about personal growth and goals:",
-                "Emotions": "Write a gentle journaling prompt about understanding and expressing emotions:"
-            }
+            prompt_request = f"""Create a thoughtful, open-ended journaling prompt about {topic.lower()}.
+Make it compassionate, encouraging self-reflection. Keep it 2-3 sentences. Be specific and actionable."""
             
-            starter = prompt_starters.get(topic, "Write a reflective journaling prompt:")
-            
-            # Generate with the model
-            generated = text_generator(starter, max_length=60, num_return_sequences=1)[0]['generated_text']
-            
-            # Clean up the output (remove the starter text)
-            prompt_text = generated.replace(starter, "").strip()
-            
-            # If generation isn't great, use fallback prompts
-            fallback_prompts = {
-                "General Reflection": "What were three moments today that made you feel something? Describe each moment and the emotion it brought up.",
-                "Stress & Anxiety": "What's weighing on your mind right now? Write about one thing you're worried about and one small step you could take to address it.",
-                "Gratitude": "List five small things from today that you're grateful for. Why did each one matter to you?",
-                "Self-Compassion": "If your best friend was going through what you're experiencing, what would you say to them? Now, say those words to yourself.",
-                "Relationships": "Think of someone who matters to you. What do you appreciate about them? When did you last tell them?",
-                "Personal Growth": "What's one thing you'd like to improve about yourself? What's one small action you could take this week?",
-                "Emotions": "What emotion have you been feeling most lately? Where do you feel it in your body? What might it be trying to tell you?"
-            }
-            
-            # Use fallback if generated text is too short or unclear
-            if len(prompt_text) < 20:
-                prompt_text = fallback_prompts[topic]
+            response = model.generate_content(prompt_request)
+            prompt_text = response.text
             
             st.write("### 💭 Your Journaling Prompt:")
             st.info(prompt_text)
@@ -157,14 +126,14 @@ elif page == "💡 Get Prompt":
             if st.button("Save This Entry"):
                 if quick_entry.strip():
                     with st.spinner("Analyzing..."):
-                        result = emotion_detector(quick_entry)[0]
+                        emotion, confidence = detect_emotion_with_gemini(quick_entry)
                         
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         entry_data = {
                             'timestamp': timestamp,
                             'text': f"Prompt: {prompt_text}\n\nResponse: {quick_entry}",
-                            'emotion': result['label'],
-                            'confidence': result['score']
+                            'emotion': emotion,
+                            'confidence': confidence
                         }
                         st.session_state.entries.append(entry_data)
                         st.success("✅ Entry saved!")
@@ -194,47 +163,53 @@ elif page == "📊 Therapy Prep":
         
         st.write("---")
         
-        # Recent entries summary
-        st.write("### 📋 Key Themes to Discuss")
-        st.write("Based on your recent entries:")
+        # AI-generated therapy prep
+        st.write("### 🤖 AI-Generated Therapy Prep Summary")
         
-        recent_entries = st.session_state.entries[-5:]  # Last 5 entries
-        recent_emotions = [e['emotion'] for e in recent_entries]
-        most_common = max(set(recent_emotions), key=recent_emotions.count)
-        
-        st.write(f"- Your most frequent emotion recently has been **{most_common}**")
-        st.write(f"- You've made **{len(st.session_state.entries)}** journal entries")
-        st.write("- Consider discussing patterns you've noticed in your emotional responses")
-        
-        st.write("---")
-        
-        # Export for therapist
-        st.write("### 📥 Export Summary for Your Therapist")
-        
-        if st.button("Generate Summary"):
-            summary = f"""THERAPY SESSION PREP SUMMARY
+        if st.button("Generate Therapy Summary", type="primary"):
+            with st.spinner("📊 Analyzing your journal entries..."):
+                # Compile recent entries
+                recent_entries = st.session_state.entries[-10:]
+                entries_text = "\n\n".join([
+                    f"[{e['timestamp']}] Emotion: {e['emotion']}\n{e['text'][:400]}"
+                    for e in recent_entries
+                ])
+                
+                summary_prompt = f"""You are a mental health assistant helping prepare for therapy.
+
+Based on these journal entries, create a concise summary with:
+1. Key emotional themes (3-5 bullet points)
+2. Suggested discussion topics for therapy (3-4 topics)
+3. Questions to explore with therapist (2-3 questions)
+
+Keep it professional, concise, and actionable.
+
+Recent journal entries:
+{entries_text}"""
+                
+                response = model.generate_content(summary_prompt)
+                
+                st.write(response.text)
+                
+                # Export option
+                st.write("---")
+                full_summary = f"""THERAPY SESSION PREP SUMMARY
 Generated: {datetime.now().strftime("%Y-%m-%d")}
 
-EMOTIONAL OVERVIEW:
+{response.text}
+
+EMOTIONAL DISTRIBUTION:
 """
-            for emotion, count in sorted(emotion_counts.items(), key=lambda x: x[1], reverse=True):
-                percentage = (count / len(emotions)) * 100
-                summary += f"- {emotion.capitalize()}: {count} entries ({percentage:.1f}%)\n"
-            
-            summary += f"\nRECENT ENTRIES ({len(recent_entries)} most recent):\n\n"
-            
-            for i, entry in enumerate(reversed(recent_entries), 1):
-                summary += f"{i}. [{entry['timestamp']}] - {entry['emotion'].capitalize()}\n"
-                summary += f"   {entry['text'][:200]}...\n\n"
-            
-            st.text_area("Copy this summary:", summary, height=300)
-            
-            st.download_button(
-                "📄 Download as Text File",
-                data=summary,
-                file_name=f"therapy_prep_{datetime.now().strftime('%Y%m%d')}.txt",
-                mime="text/plain"
-            )
+                for emotion, count in sorted(emotion_counts.items(), key=lambda x: x[1], reverse=True):
+                    percentage = (count / len(emotions)) * 100
+                    full_summary += f"- {emotion.capitalize()}: {count} entries ({percentage:.1f}%)\n"
+                
+                st.download_button(
+                    "📄 Download Summary",
+                    data=full_summary,
+                    file_name=f"therapy_prep_{datetime.now().strftime('%Y%m%d')}.txt",
+                    mime="text/plain"
+                )
 
 # PAGE 4: View History
 elif page == "📖 View History":
@@ -282,12 +257,12 @@ elif page == "📖 View History":
 st.sidebar.write("---")
 st.sidebar.write("### 💙 About This App")
 st.sidebar.info("""
-This is a free, private mental health companion powered by AI.
+This is a free mental health companion powered by Google Gemini AI.
 
 **Features:**
-- Emotion detection in your writing
-- AI-generated journaling prompts
+- AI emotion detection
+- Personalized journaling prompts
 - Therapy session preparation
-- Complete privacy (data stays on your device)
+- Secure and private
 """)
 st.sidebar.write(f"**Your entries:** {len(st.session_state.entries)}")
