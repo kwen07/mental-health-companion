@@ -5,12 +5,19 @@ from datetime import datetime
 # Page config
 st.set_page_config(page_title="Mental Health Companion", page_icon="🧠")
 
-# Get API key from Streamlit secrets (we'll set this up)
+# Get API key and configure
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
-except:
+    
+    # Try to initialize model
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+    except:
+        st.error("⚠️ Could not load Gemini model. Please check your API key.")
+        st.stop()
+        
+except Exception as e:
     st.error("⚠️ API key not configured. Please add your Gemini API key in Streamlit secrets.")
     st.stop()
 
@@ -30,19 +37,23 @@ page = st.sidebar.selectbox(
 
 # Helper function for emotion detection
 def detect_emotion_with_gemini(text):
-    prompt = f"""Analyze the emotion in this journal entry. Respond with ONLY a JSON object in this exact format:
-{{"emotion": "one of: joy, sadness, anger, fear, surprise, neutral", "confidence": 0.85}}
+    prompt = f"""Analyze the emotion in this journal entry. Respond with ONLY one word from this list: joy, sadness, anger, fear, surprise, neutral
 
-Journal entry: {text}"""
+Journal entry: {text}
+
+Emotion:"""
     
     try:
         response = model.generate_content(prompt)
-        # Parse the response
-        import json
-        result = json.loads(response.text)
-        return result['emotion'], result['confidence']
-    except:
-        # Fallback
+        emotion = response.text.strip().lower()
+        # Validate emotion
+        valid_emotions = ['joy', 'sadness', 'anger', 'fear', 'surprise', 'neutral']
+        if emotion not in valid_emotions:
+            emotion = 'neutral'
+        confidence = 0.85  # Default confidence
+        return emotion, confidence
+    except Exception as e:
+        st.error(f"Emotion detection error: {str(e)}")
         return "neutral", 0.5
 
 # PAGE 1: Journal Entry
@@ -62,37 +73,54 @@ if page == "📝 Journal Entry":
         if st.button("💾 Save Entry", type="primary"):
             if user_entry.strip():
                 with st.spinner("🔍 Analyzing your entry..."):
-                    # Detect emotion using Gemini
-                    emotion, confidence = detect_emotion_with_gemini(user_entry)
-                    
-                    # Save entry
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    entry_data = {
-                        'timestamp': timestamp,
-                        'text': user_entry,
-                        'emotion': emotion,
-                        'confidence': confidence
-                    }
-                    st.session_state.entries.append(entry_data)
-                    
-                    # Success message
-                    st.success("✅ Entry saved!")
-                    
-                    # Show emotion
-                    st.info(f"**Detected emotion:** {emotion.capitalize()}")
-                    st.progress(confidence)
-                    st.caption(f"Confidence: {confidence:.1%}")
-                    
-                    # Get supportive response from Gemini
-                    support_prompt = f"""You are a compassionate mental health companion. The user just journaled about their feelings (emotion: {emotion}).
+                    try:
+                        # Detect emotion using Gemini
+                        emotion, confidence = detect_emotion_with_gemini(user_entry)
+                        
+                        # Save entry
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        entry_data = {
+                            'timestamp': timestamp,
+                            'text': user_entry,
+                            'emotion': emotion,
+                            'confidence': confidence
+                        }
+                        st.session_state.entries.append(entry_data)
+                        
+                        # Success message
+                        st.success("✅ Entry saved!")
+                        
+                        # Show emotion
+                        st.info(f"**Detected emotion:** {emotion.capitalize()}")
+                        st.progress(confidence)
+                        st.caption(f"Confidence: {confidence:.1%}")
+                        
+                        # Get supportive response from Gemini
+                        support_prompt = f"""You are a compassionate mental health companion. The user just journaled about their feelings (emotion: {emotion}).
 Provide a brief, warm, supportive response (2-3 sentences maximum). Be validating and encouraging.
 
 User's entry: {user_entry[:300]}"""
+                        
+                        try:
+                            support_response = model.generate_content(support_prompt)
+                            st.write("💙 **Response:**")
+                            st.write(support_response.text)
+                        except:
+                            # Fallback supportive messages
+                            supportive_messages = {
+                                'joy': "💛 It's wonderful to see you feeling positive!",
+                                'sadness': "💙 Thank you for sharing. It's okay to feel this way.",
+                                'anger': "❤️ Your feelings are valid. Take time to process them.",
+                                'fear': "💜 It's brave of you to acknowledge these feelings.",
+                                'surprise': "💚 Life can be unexpected. You're handling it well.",
+                                'neutral': "💙 Thank you for taking time to journal today."
+                            }
+                            message = supportive_messages.get(emotion, "💙 Thank you for sharing.")
+                            st.write(message)
                     
-                    support_response = model.generate_content(support_prompt)
-                    st.write("💙 **Response:**")
-                    st.write(support_response.text)
-                    
+                    except Exception as e:
+                        st.error(f"An error occurred: {str(e)}")
+                        
             else:
                 st.warning("⚠️ Please write something first")
 
@@ -109,34 +137,50 @@ elif page == "💡 Get Prompt":
     
     if st.button("✨ Generate Prompt", type="primary"):
         with st.spinner("🤔 Creating your prompt..."):
-            prompt_request = f"""Create a thoughtful, open-ended journaling prompt about {topic.lower()}.
+            try:
+                prompt_request = f"""Create a thoughtful, open-ended journaling prompt about {topic.lower()}.
 Make it compassionate, encouraging self-reflection. Keep it 2-3 sentences. Be specific and actionable."""
+                
+                response = model.generate_content(prompt_request)
+                prompt_text = response.text
+                
+                st.write("### 💭 Your Journaling Prompt:")
+                st.info(prompt_text)
+                
+                st.write("---")
+                st.write("**Ready to write?** Use the space below:")
+                
+                quick_entry = st.text_area("Your response:", height=150, key="quick_journal")
+                
+                if st.button("Save This Entry"):
+                    if quick_entry.strip():
+                        with st.spinner("Analyzing..."):
+                            emotion, confidence = detect_emotion_with_gemini(quick_entry)
+                            
+                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            entry_data = {
+                                'timestamp': timestamp,
+                                'text': f"Prompt: {prompt_text}\n\nResponse: {quick_entry}",
+                                'emotion': emotion,
+                                'confidence': confidence
+                            }
+                            st.session_state.entries.append(entry_data)
+                            st.success("✅ Entry saved!")
             
-            response = model.generate_content(prompt_request)
-            prompt_text = response.text
-            
-            st.write("### 💭 Your Journaling Prompt:")
-            st.info(prompt_text)
-            
-            st.write("---")
-            st.write("**Ready to write?** Use the space below:")
-            
-            quick_entry = st.text_area("Your response:", height=150, key="quick_journal")
-            
-            if st.button("Save This Entry"):
-                if quick_entry.strip():
-                    with st.spinner("Analyzing..."):
-                        emotion, confidence = detect_emotion_with_gemini(quick_entry)
-                        
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        entry_data = {
-                            'timestamp': timestamp,
-                            'text': f"Prompt: {prompt_text}\n\nResponse: {quick_entry}",
-                            'emotion': emotion,
-                            'confidence': confidence
-                        }
-                        st.session_state.entries.append(entry_data)
-                        st.success("✅ Entry saved!")
+            except Exception as e:
+                st.error(f"Error generating prompt: {str(e)}")
+                # Fallback prompts
+                fallback_prompts = {
+                    "General Reflection": "What were three moments today that made you feel something? Describe each moment and the emotion it brought up.",
+                    "Stress & Anxiety": "What's weighing on your mind right now? Write about one thing you're worried about and one small step you could take to address it.",
+                    "Gratitude": "List five small things from today that you're grateful for. Why did each one matter to you?",
+                    "Self-Compassion": "If your best friend was going through what you're experiencing, what would you say to them? Now, say those words to yourself.",
+                    "Relationships": "Think of someone who matters to you. What do you appreciate about them? When did you last tell them?",
+                    "Personal Growth": "What's one thing you'd like to improve about yourself? What's one small action you could take this week?",
+                    "Emotions": "What emotion have you been feeling most lately? Where do you feel it in your body? What might it be trying to tell you?"
+                }
+                st.write("### 💭 Your Journaling Prompt:")
+                st.info(fallback_prompts[topic])
 
 # PAGE 3: Therapy Prep
 elif page == "📊 Therapy Prep":
@@ -168,14 +212,15 @@ elif page == "📊 Therapy Prep":
         
         if st.button("Generate Therapy Summary", type="primary"):
             with st.spinner("📊 Analyzing your journal entries..."):
-                # Compile recent entries
-                recent_entries = st.session_state.entries[-10:]
-                entries_text = "\n\n".join([
-                    f"[{e['timestamp']}] Emotion: {e['emotion']}\n{e['text'][:400]}"
-                    for e in recent_entries
-                ])
-                
-                summary_prompt = f"""You are a mental health assistant helping prepare for therapy.
+                try:
+                    # Compile recent entries
+                    recent_entries = st.session_state.entries[-10:]
+                    entries_text = "\n\n".join([
+                        f"[{e['timestamp']}] Emotion: {e['emotion']}\n{e['text'][:400]}"
+                        for e in recent_entries
+                    ])
+                    
+                    summary_prompt = f"""You are a mental health assistant helping prepare for therapy.
 
 Based on these journal entries, create a concise summary with:
 1. Key emotional themes (3-5 bullet points)
@@ -186,30 +231,33 @@ Keep it professional, concise, and actionable.
 
 Recent journal entries:
 {entries_text}"""
-                
-                response = model.generate_content(summary_prompt)
-                
-                st.write(response.text)
-                
-                # Export option
-                st.write("---")
-                full_summary = f"""THERAPY SESSION PREP SUMMARY
+                    
+                    response = model.generate_content(summary_prompt)
+                    
+                    st.write(response.text)
+                    
+                    # Export option
+                    st.write("---")
+                    full_summary = f"""THERAPY SESSION PREP SUMMARY
 Generated: {datetime.now().strftime("%Y-%m-%d")}
 
 {response.text}
 
 EMOTIONAL DISTRIBUTION:
 """
-                for emotion, count in sorted(emotion_counts.items(), key=lambda x: x[1], reverse=True):
-                    percentage = (count / len(emotions)) * 100
-                    full_summary += f"- {emotion.capitalize()}: {count} entries ({percentage:.1f}%)\n"
+                    for emotion, count in sorted(emotion_counts.items(), key=lambda x: x[1], reverse=True):
+                        percentage = (count / len(emotions)) * 100
+                        full_summary += f"- {emotion.capitalize()}: {count} entries ({percentage:.1f}%)\n"
+                    
+                    st.download_button(
+                        "📄 Download Summary",
+                        data=full_summary,
+                        file_name=f"therapy_prep_{datetime.now().strftime('%Y%m%d')}.txt",
+                        mime="text/plain"
+                    )
                 
-                st.download_button(
-                    "📄 Download Summary",
-                    data=full_summary,
-                    file_name=f"therapy_prep_{datetime.now().strftime('%Y%m%d')}.txt",
-                    mime="text/plain"
-                )
+                except Exception as e:
+                    st.error(f"Error generating summary: {str(e)}")
 
 # PAGE 4: View History
 elif page == "📖 View History":
@@ -266,4 +314,3 @@ This is a free mental health companion powered by Google Gemini AI.
 - Secure and private
 """)
 st.sidebar.write(f"**Your entries:** {len(st.session_state.entries)}")
-
