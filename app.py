@@ -184,7 +184,6 @@ Make it compassionate, encouraging self-reflection. Keep it 2-3 sentences. Be sp
                             st.success("✅ Entry saved!")
             
             except Exception as e:
-                st.error(f"Error generating prompt: {str(e)}")
                 # Fallback prompts
                 fallback_prompts = {
                     "General Reflection": "What were three moments today that made you feel something? Describe each moment and the emotion it brought up.",
@@ -330,4 +329,5 @@ This is a free mental health companion powered by Google Gemini AI.
 - Secure and private
 """)
 st.sidebar.write(f"**Your entries:** {len(st.session_state.entries)}")
+
 
